@@ -1689,6 +1689,11 @@ class RelationshipCall {
                 this.currentSdpOffer = vanillaOfferSdp;
                 this.currentSdpAnswer = null;
 
+                if (typeof window.triggerPartnerNotification === 'function') {
+                    const callTypeName = this.callType === 'video' ? 'Video' : 'Suara';
+                    window.triggerPartnerNotification(`Telepon Masuk 📞`, `Sayang memanggilmu via Panggilan ${callTypeName}. Ketuk untuk menjawab!`);
+                }
+
                 // Klaim sesi agar tab lain tidak berebut koneksi
                 this.claimCallSession(data.call_id, 'dialing');
                 // Bersihkan blocklist untuk call baru ini (fresh start)
