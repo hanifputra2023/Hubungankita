@@ -1807,7 +1807,9 @@ class RelationshipCall {
         const isMinimized = document.hidden || (window.cordova && window.cordova.plugins && window.cordova.plugins.backgroundMode && window.cordova.plugins.backgroundMode.isActive());
 
         if (isMinimized) {
-            // Skenario A: Jika dalam aplikasi native Capacitor, gunakan native Local Notification
+            // Skenario A ditonaktifkan (di-comment) karena APK sudah menerima notifikasi FCM real-time via Vercel Bridge.
+            // Jika memicu LocalNotifications lagi, pengguna akan menerima notifikasi ganda (FCM + Lokal).
+            /*
             if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications) {
                 try {
                     window.Capacitor.Plugins.LocalNotifications.schedule({
@@ -1815,7 +1817,7 @@ class RelationshipCall {
                             {
                                 title: '📞 Panggilan Masuk',
                                 body: data.caller_name + ' memanggil Anda...',
-                                id: 9999, // ID statis agar mudah dibersihkan
+                                id: 9999,
                                 sound: null,
                                 extra: {
                                     call_id: data.call_id
@@ -1827,8 +1829,9 @@ class RelationshipCall {
                     console.warn('[Call] Gagal mengirim LocalNotification native:', err);
                 }
             }
+            */
             // Skenario B: Jika di browser / PWA standar
-            else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
                 try {
                     const notif = new Notification('📞 Panggilan Masuk', {
                         body: data.caller_name + ' memanggil Anda...',
