@@ -2239,6 +2239,14 @@ class RelationshipCall {
         } else if (signal.type === 'sdp-offer') {
             await this.handleRemoteSdpOffer(signal.sdp);
         } else if (signal.type === 'sdp-answer') {
+            // sdp-answer hanya boleh diproses oleh CALLER.
+            // RECEIVER adalah yang MENGIRIM answer — ia tidak boleh memprosesnya kembali.
+            // Ini adalah akar bug: Pusher broadcast ke semua, Receiver menerima sdp-answer
+            // milik sendiri dan mencoba setRemoteDescription → InvalidStateError → panggilan mati.
+            if (this.role !== 'caller') {
+                console.log('[Pusher Signal] sdp-answer diabaikan: hanya Caller yang memproses ini (role saat ini:', this.role, ').');
+                return;
+            }
             // Guard mutex: jika sudah diproses atau koneksi sudah stable, abaikan
             if (this._processingAnswer) {
                 console.log('[Pusher Signal] sdp-answer sedang diproses — abaikan duplikat.');
