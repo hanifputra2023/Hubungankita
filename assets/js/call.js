@@ -142,7 +142,8 @@ class RelationshipCall {
         // Pasang event ke tombol-tombol overlay
         this.bindEvents();
 
-        // Mulai polling idle ringan (tiap 4 detik) untuk deteksi panggilan masuk
+        // Cek status panggilan sekali saja saat load halaman untuk pemulihan sesi aktif jika ada
+        this.pollCallStatus();
         this.startIdlePolling();
 
         // ── Pemulihan Otomatis: Sinkronisasi ulang saat tab kembali aktif dari background ──
@@ -930,26 +931,17 @@ class RelationshipCall {
     // --------------------------------------------------------
     startIdlePolling() {
         this.stopPolling();
-        this.pollCallStatus(); // Eksekusi instan di milidetik pertama tanpa delay!
-        this.pollInterval = setInterval(() => {
-            this.pollCallStatus();
-        }, 20000); // 20 detik — hemat server hits, cukup untuk deteksi panggilan masuk
+        // Polling dinonaktifkan sepenuhnya standby guna menghemat hits database
     }
 
     startActivePolling() {
         this.stopPolling();
-        this.pollCallStatus(); // Eksekusi instan di milidetik pertama tanpa delay!
-        this.pollInterval = setInterval(() => {
-            this.pollCallStatus();
-        }, 3000); // 3 detik saat panggilan aktif — cukup responsif, jauh lebih hemat
+        // Polling dinonaktifkan sepenuhnya saat panggilan aktif (WebRTC real-time didorong oleh Pusher)
     }
 
     startReconnectingPolling() {
         this.stopPolling();
-        this.pollCallStatus(); // Eksekusi instan di milidetik pertama tanpa delay!
-        this.pollInterval = setInterval(() => {
-            this.pollCallStatus();
-        }, 800); // Polling super cepat (800ms) untuk pemulihan instan!
+        // Polling dinonaktifkan sepenuhnya saat reconnecting
     }
 
     stopPolling() {
@@ -1455,6 +1447,12 @@ class RelationshipCall {
                 fd.append('sdp_offer', vanillaOfferSdp);
                 await fetch(`${this.baseUrl}/call/updateOffer`, { method: 'POST', body: fd });
 
+                // Pancarkan sdp-offer secara instan via Pusher (Zero-Polling)
+                const signalFd = new FormData();
+                signalFd.append('call_id', this.callId);
+                signalFd.append('signal', JSON.stringify({ type: 'sdp-offer', sdp: vanillaOfferSdp }));
+                await fetch(`${this.baseUrl}/call/signal`, { method: 'POST', body: signalFd });
+
                 console.log('[Call Reconnect] Offer baru berhasil diperbarui di server, menunggu Answer dari pasangan.');
 
             } else {
@@ -1760,7 +1758,11 @@ class RelationshipCall {
         this.callId = data.call_id;
         this.role = 'receiver';
         this.status = 'ringing';
-        this.callType = data.call_type || 'audio';
+        this.callType = data.call_type || data.call_type || 'audio';
+        
+        if (data.sdp_offer) {
+            this.currentSdpOffer = data.sdp_offer;
+        }
 
         // Tampilkan Modal Panggilan Masuk melayang
         const modal = document.getElementById('incoming-call-modal');
@@ -1877,9 +1879,21 @@ class RelationshipCall {
         this.setCallUIState('active', 'Menghubungkan...');
 
         try {
-            // Tarik detail panggilan dari server (ambil SDP Offer milik Caller)
-            const checkRes = await fetch(`${this.baseUrl}/call/poll`, { method: 'POST' });
-            const callData = await checkRes.json();
+            // Ambil detail panggilan (gunakan data sdp_offer memori jika tersedia untuk hemat hit database)
+            let callData = null;
+            if (this.currentSdpOffer && this.callId) {
+                callData = {
+                    status: 'ringing',
+                    call_id: this.callId,
+                    call_type: this.callType,
+                    sdp_offer: this.currentSdpOffer,
+                    caller_name: this.incomingCallerName,
+                    caller_avatar: this.incomingCallerAvatar
+                };
+            } else {
+                const checkRes = await fetch(`${this.baseUrl}/call/poll`, { method: 'POST' });
+                callData = await checkRes.json();
+            }
 
             if (callData.status !== 'ringing') {
                 this.terminateCallLocally("Panggilan sudah kedaluwarsa atau dibatalkan.");
@@ -2134,6 +2148,83 @@ class RelationshipCall {
         }
     }
 
+    async handleIncomingSignal(data) {
+        // Abaikan jika sinyal ini dikirim oleh kita sendiri
+        if (parseInt(data.sender_id) === parseInt(this.currentUserId)) return;
+        
+        // Pastikan callId cocok (untuk menghindari intervensi dari panggilan lama)
+        if (this.callId && parseInt(data.call_id) !== parseInt(this.callId)) {
+            console.warn('[Pusher Signal] ID panggilan tidak cocok, abaikan.', data.call_id, this.callId);
+            return;
+        }
+
+        const signal = data.signal;
+        if (!signal) return;
+
+        console.log(`[Pusher Signal] Memproses sinyal bertipe: ${signal.type}`);
+
+        if (signal.type === 'ice-candidate') {
+            await this.handleRemoteIceCandidate(signal.candidate);
+        } else if (signal.type === 'sdp-offer') {
+            await this.handleRemoteSdpOffer(signal.sdp);
+        } else if (signal.type === 'sdp-answer') {
+            await this.handleCallAnswered({
+                sdp_answer: signal.sdp,
+                sdp_offer: this.currentSdpOffer
+            });
+        }
+    }
+
+    async handleRemoteIceCandidate(cand) {
+        if (!this.peerConnection) return;
+        
+        // Deteksi sinyal reload instan dari pasangan secara instan (0 detik delay)
+        if (cand && cand.reloading === true) {
+            console.warn('[ICE] Mendeteksi sinyal reload instan dari pasangan! Memulai pemulihan...');
+            this.triggerPartnerReloadRecovery(this.lastPolledData);
+            return;
+        }
+
+        const signature = JSON.stringify(cand);
+        if (this.processedCandidates.has(signature)) return;
+        this.processedCandidates.add(signature);
+
+        if (!this.peerConnection.remoteDescription) {
+            this.pendingRemoteCandidates.push(cand);
+            console.log('[ICE] Buffered candidate (remoteDesc belum siap):', cand.candidate?.substring(0, 50));
+        } else {
+            try {
+                await this.peerConnection.addIceCandidate(new RTCIceCandidate(cand));
+                console.log('[ICE] Added remote candidate:', cand.candidate?.substring(0, 50));
+            } catch (e) {
+                console.warn('[ICE] Gagal addIceCandidate:', e);
+            }
+        }
+    }
+
+    async handleRemoteSdpOffer(sdp) {
+        if (sdp === this.currentSdpOffer) return;
+        console.warn('[Call Signaling] Pasangan memperbarui offer. Melakukan negosiasi ulang...');
+        this.currentSdpOffer = sdp;
+        
+        try {
+            if (this.peerConnection) {
+                this.peerConnection.close();
+                this.peerConnection = null;
+            }
+            const callData = {
+                status: 'active',
+                call_id: this.callId,
+                call_type: this.callType,
+                sdp_offer: sdp,
+                role: 'receiver'
+            };
+            this.reconnectActiveCall(callData);
+        } catch (err) {
+            console.error('[Call Signaling] Gagal memproses update offer:', err);
+        }
+    }
+
     handleLocalIceCandidate(event, role) {
         if (event.candidate) {
             if (this.callId) {
@@ -2160,19 +2251,25 @@ class RelationshipCall {
     // SIGNALING: PERTUKARAN ICE CANDIDATES
     // --------------------------------------------------------
     async sendIceCandidate(role, candidate) {
-        const formData = new FormData();
-        formData.append('call_id', this.callId);
-        formData.append('role', role);
-        // Pastikan melakukan serialisasi yang benar terhadap objek RTCIceCandidate (menghindari stringification {} kosong pada beberapa browser)
+        // Pastikan melakukan serialisasi yang benar terhadap objek RTCIceCandidate
         const candidateData = candidate.toJSON ? candidate.toJSON() : {
             candidate: candidate.candidate,
             sdpMid: candidate.sdpMid,
             sdpMLineIndex: candidate.sdpMLineIndex,
             usernameFragment: candidate.usernameFragment
         };
-        formData.append('candidate', JSON.stringify(candidateData));
 
-        await fetch(`${this.baseUrl}/call/addIce`, {
+        const signal = {
+            type: 'ice-candidate',
+            role: role,
+            candidate: candidateData
+        };
+
+        const formData = new FormData();
+        formData.append('call_id', this.callId);
+        formData.append('signal', JSON.stringify(signal));
+
+        await fetch(`${this.baseUrl}/call/signal`, {
             method: 'POST',
             body: formData
         });
