@@ -2188,8 +2188,10 @@ class RelationshipCall {
             this.startTimer();
             console.log('[Call] handleCallAnswered: berhasil terhubung!');
         } catch (e) {
-            // InvalidStateError 'wrong state: stable' = race condition, koneksi sebenarnya sudah OK
-            if (e instanceof DOMException && e.name === 'InvalidStateError') {
+            // InvalidStateError 'wrong state: stable' = race condition, koneksi sebenarnya sudah OK.
+            // Gunakan deteksi langsung pada properti e untuk keamanan cross-context (WebView/Iframe).
+            const isInvalidState = e && (e.name === 'InvalidStateError' || e.message?.includes('stable') || e.message?.includes('InvalidStateError'));
+            if (isInvalidState) {
                 console.warn('[Call] setRemoteDescription gagal (InvalidStateError) — kemungkinan race condition, cek state...');
                 if (this.peerConnection?.signalingState === 'stable') {
                     console.log('[Call] State sudah stable — koneksi OK, lanjutkan tanpa memutus.');
