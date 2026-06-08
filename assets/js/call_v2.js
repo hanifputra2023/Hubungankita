@@ -3248,6 +3248,7 @@ class RelationshipCall {
         const overlayVideo   = document.getElementById('overlay-remote-video');
         const expandCard     = document.getElementById('call-expand-card');
         const overlayContainer = document.getElementById('call-overlay-video-container');
+        const expandModal    = document.getElementById('call-expand-modal');
 
         if (active) {
             // ── Video: tidak boleh dipotong → object-contain ──
@@ -3268,19 +3269,30 @@ class RelationshipCall {
                 v.classList.add('object-cover');
             });
 
+            // Restore expand modal padding
+            if (expandModal) {
+                if (expandModal.dataset.origClass) {
+                    expandModal.className = expandModal.dataset.origClass;
+                    delete expandModal.dataset.origClass;
+                }
+            }
+
             // Restore expand card
             if (expandCard) {
                 if (expandCard.dataset.origClass) {
                     expandCard.className = expandCard.dataset.origClass;
                     delete expandCard.dataset.origClass;
                 }
-                expandCard.style.minHeight   = '';
-                expandCard.style.height      = '';
-                expandCard.style.maxHeight   = '';
-                expandCard.style.aspectRatio = '';
-                expandCard.style.padding     = '';
-                expandCard.style.maxWidth    = '';
-                expandCard.style.width       = '';
+                expandCard.style.minHeight    = '';
+                expandCard.style.height       = '';
+                expandCard.style.maxHeight    = '';
+                expandCard.style.aspectRatio  = '';
+                expandCard.style.padding      = '';
+                expandCard.style.maxWidth     = '';
+                expandCard.style.width        = '';
+                expandCard.style.borderRadius = '';
+                expandCard.style.border       = '';
+                expandCard.style.margin       = '';
             }
 
             // Restore overlay container
@@ -3302,94 +3314,58 @@ class RelationshipCall {
         const overlayVideo = document.getElementById('overlay-remote-video');
         const expandCard = document.getElementById('call-expand-card');
         const overlayContainer = document.getElementById('call-overlay-video-container');
+        const expandModal = document.getElementById('call-expand-modal');
 
         if (!remoteVideo) return;
 
         // Tunggu sampai videoWidth dan videoHeight tersedia
         if (remoteVideo.videoWidth === 0 || remoteVideo.videoHeight === 0) {
             console.log('[ScreenShare Layout] Menunggu dimensi video remote...');
-            // Terapkan default portrait mode sementara agar tidak kosong/rusak sebelum loading selesai
-            if (expandCard && !expandCard.dataset.origClass) {
-                expandCard.dataset.origClass = expandCard.className;
-                expandCard.classList.remove('max-w-sm');
-                expandCard.classList.add('max-w-sm');
-                expandCard.style.minHeight    = 'min(90dvh, 720px)';
-                expandCard.style.height       = 'min(90dvh, 720px)';
-                expandCard.style.maxHeight    = '90dvh';
-                expandCard.style.aspectRatio  = '';
-                expandCard.style.padding      = '0';
-            }
-            if (overlayContainer && !overlayContainer.dataset.origClass) {
-                overlayContainer.dataset.origClass = overlayContainer.className;
-                overlayContainer.classList.remove('aspect-video');
-                overlayContainer.style.aspectRatio = '9 / 16';
-                overlayContainer.style.maxHeight   = '260px';
-            }
-            return;
         }
 
         const isLandscape = remoteVideo.videoWidth > remoteVideo.videoHeight;
         console.log(`[ScreenShare Layout] Deteksi resolusi stream: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight} (${isLandscape ? 'Landscape' : 'Portrait'})`);
 
-        if (isLandscape) {
-            // ── Stream Landscape ──
-            if (expandCard) {
-                if (!expandCard.dataset.origClass) {
-                    expandCard.dataset.origClass = expandCard.className;
-                }
-                expandCard.classList.remove('max-w-sm');
-                
-                const isViewportLandscape = window.innerWidth > window.innerHeight;
-                if (isViewportLandscape) {
-                    // Jika layar viewer landscape, buat full screen agar visual maksimal
-                    expandCard.style.maxWidth = '100vw';
-                    expandCard.style.width = '100%';
-                    expandCard.style.height = '100dvh';
-                    expandCard.style.minHeight = '100dvh';
-                    expandCard.style.maxHeight = '100dvh';
-                    expandCard.style.aspectRatio = '';
-                    expandCard.style.padding = '0';
-                } else {
-                    // Jika layar viewer portrait, buat lebar penuh dengan aspect ratio 16:9 agar fit proporsional
-                    expandCard.style.maxWidth = '100%';
-                    expandCard.style.width = '100%';
-                    expandCard.style.height = 'auto';
-                    expandCard.style.minHeight = '';
-                    expandCard.style.maxHeight = '';
-                    expandCard.style.aspectRatio = '16 / 9';
-                    expandCard.style.padding = '0';
-                }
+        // ── Hilangkan padding modal pada desktop agar card bisa benar-benar menyentuh tepi layar ──
+        if (expandModal) {
+            if (!expandModal.dataset.origClass) {
+                expandModal.dataset.origClass = expandModal.className;
             }
+            expandModal.classList.remove('md:p-4');
+        }
 
-            if (overlayContainer) {
-                if (!overlayContainer.dataset.origClass) {
-                    overlayContainer.dataset.origClass = overlayContainer.className;
-                }
+        // ── Buat Expand Card Full Screen Tanpa Batasan (Theater Mode) ──
+        if (expandCard) {
+            if (!expandCard.dataset.origClass) {
+                expandCard.dataset.origClass = expandCard.className;
+            }
+            // Hapus class tailwind pembatas
+            expandCard.classList.remove('max-w-sm', 'md:max-w-4xl', 'md:h-[85vh]', 'md:rounded-3xl');
+            
+            // Terapkan inline style full-bleed
+            expandCard.style.maxWidth = '100vw';
+            expandCard.style.width = '100vw';
+            expandCard.style.height = '100vh';
+            expandCard.style.height = '100dvh';
+            expandCard.style.minHeight = '100dvh';
+            expandCard.style.maxHeight = '100dvh';
+            expandCard.style.borderRadius = '0';
+            expandCard.style.border = 'none';
+            expandCard.style.margin = '0';
+            expandCard.style.padding = '0';
+            expandCard.style.aspectRatio = '';
+        }
+
+        // ── Overlay widget aspect ratio sesuai video stream ──
+        if (overlayContainer) {
+            if (!overlayContainer.dataset.origClass) {
+                overlayContainer.dataset.origClass = overlayContainer.className;
+            }
+            if (isLandscape) {
                 overlayContainer.classList.add('aspect-video');
                 overlayContainer.style.aspectRatio = '16 / 9';
                 overlayContainer.style.maxHeight = '';
-            }
-        } else {
-            // ── Stream Portrait ──
-            if (expandCard) {
-                if (!expandCard.dataset.origClass) {
-                    expandCard.dataset.origClass = expandCard.className;
-                }
-                expandCard.classList.remove('max-w-sm');
-                expandCard.classList.add('max-w-sm');
-                expandCard.style.minHeight = 'min(90dvh, 720px)';
-                expandCard.style.height = 'min(90dvh, 720px)';
-                expandCard.style.maxHeight = '90dvh';
-                expandCard.style.aspectRatio = '';
-                expandCard.style.maxWidth = '';
-                expandCard.style.width = '';
-                expandCard.style.padding = '0';
-            }
-
-            if (overlayContainer) {
-                if (!overlayContainer.dataset.origClass) {
-                    overlayContainer.dataset.origClass = overlayContainer.className;
-                }
+            } else {
                 overlayContainer.classList.remove('aspect-video');
                 overlayContainer.style.aspectRatio = '9 / 16';
                 overlayContainer.style.maxHeight = '260px';
