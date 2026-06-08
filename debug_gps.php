@@ -6,11 +6,9 @@
 // (Hapus file ini setelah selesai debugging!)
 // ============================================================
 
-define('ROOT_PATH', dirname(__DIR__));
-define('APP_PATH', ROOT_PATH . '/app');
-require_once ROOT_PATH . '/config/app.php';
+require_once dirname(__DIR__) . '/config/app.php';
 require_once ROOT_PATH . '/config/database.php';
-require_once APP_PATH . '/core/Session.php';
+require_once ROOT_PATH . '/core/Session.php';
 
 Session::init();
 
