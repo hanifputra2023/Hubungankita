@@ -1273,7 +1273,7 @@ class RelationshipCall {
                 return;
             }
 
-            this.callType = data.call_type || 'audio';
+            this.callType = data.call_type || data.type || 'audio';
 
             // Ambil media dengan constraints dinamis
             const constraints = {
@@ -1758,7 +1758,7 @@ class RelationshipCall {
         this.callId = data.call_id;
         this.role = 'receiver';
         this.status = 'ringing';
-        this.callType = data.call_type || data.call_type || 'audio';
+        this.callType = data.call_type || data.type || 'audio';
         
         if (data.sdp_offer) {
             this.currentSdpOffer = data.sdp_offer;
@@ -1906,7 +1906,7 @@ class RelationshipCall {
             // Pastikan callId & callType tersinkronisasi sempurna
             this.callId = callData.call_id;
             this.role = 'receiver';
-            this.callType = callData.call_type || 'audio';
+            this.callType = callData.call_type || callData.type || 'audio';
             this.updateVideoUI();
 
             if (!this.incomingCallerName && callData.caller_name) {
