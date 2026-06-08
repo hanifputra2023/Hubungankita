@@ -1697,7 +1697,7 @@ class RelationshipCall {
 
                 if (typeof window.triggerPartnerNotification === 'function') {
                     const callTypeName = this.callType === 'video' ? 'Video' : 'Suara';
-                    window.triggerPartnerNotification(`Telepon Masuk 📞`, `Sayang memanggilmu via Panggilan ${callTypeName}. Ketuk untuk menjawab!`);
+                    window.triggerPartnerNotification(`Telepon Masuk 📞`, `Sayang memanggilmu via Panggilan ${callTypeName}. Ketuk untuk menjawab!`, `call_notif`);
                 }
 
                 // Klaim sesi agar tab lain tidak berebut koneksi
@@ -2115,6 +2115,9 @@ class RelationshipCall {
                 body: formData
             });
         }
+        if (typeof window.triggerPartnerNotification === 'function') {
+            window.triggerPartnerNotification(`Panggilan Berakhir 📞`, `Sayang menolak panggilan.`, `call_notif`);
+        }
         this.terminateCallLocally();
     }
 
@@ -2398,6 +2401,9 @@ class RelationshipCall {
                 method: 'POST',
                 body: formData
             });
+        }
+        if (typeof window.triggerPartnerNotification === 'function') {
+            window.triggerPartnerNotification(`Panggilan Berakhir 📞`, `Panggilan telah selesai atau dibatalkan.`, `call_notif`);
         }
         this.terminateCallLocally("Panggilan selesai.");
     }
