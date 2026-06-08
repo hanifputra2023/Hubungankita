@@ -199,8 +199,17 @@ class RelationshipCall {
             }
 
             // ── PENGAMBILALIHAN SESI LINTAS-TAB (TAKEOVER PROTECTION) ──
-            // Jika tab lain merebut posisi Master, tab ini harus mengalah secara anggun
+            // Jika tab lain merebut posisi Master, tab ini harus mengalah secara anggun.
+            // PENTING: Di localhost, dua browser berbeda berbagi localStorage yang sama (same-origin).
+            // Tambahkan guard: hanya terminate jika sesi sudah lebih dari 5 detik berlalu (bukan sesi yang baru saja dibuat).
             if (session.tabId !== this.tabId && this.status !== 'idle' && this.status !== 'ringing') {
+                const sessionAge = Date.now() - (session.timestamp || 0);
+                if (sessionAge < 5000) {
+                    // Sesi sangat baru — mungkin baru saja di-create oleh kita sendiri di tab/browser lain,
+                    // jangan terminate karena ini bisa jadi false positive di localhost same-origin.
+                    console.log('[Call] Abaikan takeover: sesi terlalu baru (' + sessionAge + 'ms). Kemungkinan localhost cross-browser.');
+                    return;
+                }
                 console.log('[Call] Tab lain mengambil alih panggilan sebagai Master baru — menutup koneksi lokal.');
                 this.terminateCallLocally('Panggilan dipindahkan ke tab lain.');
                 return;
@@ -936,12 +945,21 @@ class RelationshipCall {
 
     startActivePolling() {
         this.stopPolling();
-        // Polling dinonaktifkan sepenuhnya saat panggilan aktif (WebRTC real-time didorong oleh Pusher)
+        // Polling ringan setiap 10 detik selama panggilan aktif:
+        // - Mendeteksi jika pasangan tiba-tiba disconnect tanpa sinyal Pusher
+        // - Mereset consecutiveIdleCount jika server masih 'active'
+        // - Tidak terlalu agresif sehingga tidak membebani hit limit hosting
+        this.pollInterval = setInterval(() => {
+            this.pollCallStatus();
+        }, 10000);
     }
 
     startReconnectingPolling() {
         this.stopPolling();
-        // Polling dinonaktifkan sepenuhnya saat reconnecting
+        // Polling lebih sering saat reconnecting (setiap 5 detik)
+        this.pollInterval = setInterval(() => {
+            this.pollCallStatus();
+        }, 5000);
     }
 
     stopPolling() {
@@ -1086,9 +1104,9 @@ class RelationshipCall {
                 // Debounce toleransi: DB di hosting gratis lambat/lag, kadang mengembalikan status kosong untuk 1-2 kali polling.
                 // Kita hanya menutup panggilan jika menerima status mati sebanyak 3 kali berturut-turut (total ~4.5 detik).
                 this.consecutiveIdleCount = (this.consecutiveIdleCount || 0) + 1;
-                console.log(`[Call] Menerima status non-aktif (${data.status}). Menghitung toleransi: ${this.consecutiveIdleCount}/3`);
+                console.log(`[Call] Menerima status non-aktif (${data.status}). Menghitung toleransi: ${this.consecutiveIdleCount}/5`);
 
-                if (this.consecutiveIdleCount >= 3) {
+                if (this.consecutiveIdleCount >= 5) {
                     this.consecutiveIdleCount = 0;
                     const wasDeclined = data.status === 'declined';
                     this.terminateCallLocally(wasDeclined ? '' : 'Panggilan diakhiri.');
@@ -2129,11 +2147,27 @@ class RelationshipCall {
     // --------------------------------------------------------
     async handleCallAnswered(data) {
         this.stopSounds();
-        this.status = 'active';
-        this.setCallUIState('active', 'Terhubung');
-        this.updateVideoUI();
 
         try {
+            // Guard: jika koneksi sudah stable, setRemoteDescription akan gagal dengan InvalidStateError.
+            // Ini terjadi ketika Pusher dan polling keduanya trigger handleCallAnswered untuk SDP yang sama.
+            // Jika sudah stable dan sdp_answer sama dengan yang sudah diset, koneksi sudah OK — abaikan saja.
+            if (this.peerConnection && this.peerConnection.signalingState === 'stable') {
+                console.log('[Call] handleCallAnswered dipanggil tapi koneksi sudah stable — tidak perlu diproses ulang.');
+                // Pastikan status UI sudah aktif
+                if (this.status !== 'active') {
+                    this.status = 'active';
+                    this.setCallUIState('active', 'Terhubung');
+                    this.updateVideoUI();
+                    this.startTimer();
+                }
+                return;
+            }
+
+            this.status = 'active';
+            this.setCallUIState('active', 'Terhubung');
+            this.updateVideoUI();
+
             // Set Remote SDP Answer dari Receiver
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription({
                 type: 'answer',
@@ -2149,8 +2183,21 @@ class RelationshipCall {
 
             this.startTimer();
         } catch (e) {
+            // Jika error-nya adalah 'wrong state: stable', koneksi sebenarnya sudah OK.
+            // Jangan putus panggilan — ini hanya race condition antara Pusher dan polling.
+            if (e instanceof DOMException && e.name === 'InvalidStateError' && this.peerConnection?.signalingState === 'stable') {
+                console.warn('[Call] setRemoteDescription gagal tapi state sudah stable — koneksi OK, lanjutkan.');
+                if (this.status !== 'active') {
+                    this.status = 'active';
+                    this.setCallUIState('active', 'Terhubung');
+                    this.updateVideoUI();
+                    this.startTimer();
+                }
+                return;
+            }
             console.error('Gagal mengonfigurasi deskripsi koneksi pasangan:', e);
-            this.endCallFlow();
+            // Hanya akhiri panggilan jika benar-benar terjadi error fatal (bukan race condition)
+            this.terminateCallLocally('Koneksi gagal dikonfigurasi.');
         }
     }
 
@@ -2174,6 +2221,12 @@ class RelationshipCall {
         } else if (signal.type === 'sdp-offer') {
             await this.handleRemoteSdpOffer(signal.sdp);
         } else if (signal.type === 'sdp-answer') {
+            // Guard: jika PeerConnection sudah 'stable', SDP answer ini sudah diproses sebelumnya.
+            // Ini mencegah race condition: Pusher cepat, tapi polling juga bisa trigger handleCallAnswered.
+            if (this.peerConnection && this.peerConnection.signalingState === 'stable') {
+                console.log('[Pusher Signal] sdp-answer diterima tapi koneksi sudah stable — abaikan duplikat.');
+                return;
+            }
             await this.handleCallAnswered({
                 sdp_answer: signal.sdp,
                 sdp_offer: this.currentSdpOffer
