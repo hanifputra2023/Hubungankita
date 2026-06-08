@@ -8,6 +8,10 @@ class RelationshipCall {
         // Gunakan BASE_URL global yang disinkronkan dari PHP
         this.baseUrl = typeof BASE_URL !== 'undefined' ? BASE_URL : (window.location.origin + '/hubungan/public');
 
+        // ID user yang sedang login — digunakan untuk memfilter sinyal Pusher milik sendiri
+        // agar Receiver tidak memproses sdp-answer yang dikirimnya sendiri
+        this.currentUserId = (typeof window.MY_USER_ID !== 'undefined') ? parseInt(window.MY_USER_ID) : null;
+
         // State & Variabel Koneksi
         this.callId = null;
         this.role = null; // 'caller' atau 'receiver'
@@ -2211,8 +2215,14 @@ class RelationshipCall {
 
     async handleIncomingSignal(data) {
         // Abaikan jika sinyal ini dikirim oleh kita sendiri
-        if (parseInt(data.sender_id) === parseInt(this.currentUserId)) return;
-        
+        // PENTING: currentUserId harus terisi (dari window.MY_USER_ID di main.php).
+        // Jika tidak, filter ini tidak berjalan dan receiver bisa memproses sinyalnya sendiri.
+        const senderId = parseInt(data.sender_id);
+        if (this.currentUserId && senderId === this.currentUserId) {
+            console.log('[Pusher Signal] Abaikan: sinyal dari diri sendiri (sender_id:', senderId, ')');
+            return;
+        }
+
         // Pastikan callId cocok (untuk menghindari intervensi dari panggilan lama)
         if (this.callId && parseInt(data.call_id) !== parseInt(this.callId)) {
             console.warn('[Pusher Signal] ID panggilan tidak cocok, abaikan.', data.call_id, this.callId);
