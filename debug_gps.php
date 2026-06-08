@@ -10,7 +10,7 @@ require_once dirname(__DIR__) . '/config/app.php';
 require_once ROOT_PATH . '/config/database.php';
 require_once ROOT_PATH . '/core/Session.php';
 
-Session::init();
+Session::start();
 
 header('Content-Type: text/plain; charset=utf-8');
 
