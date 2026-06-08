@@ -22,6 +22,8 @@ class RelationshipCall {
         this.incomingCallerName = null;
         this.incomingCallerAvatar = null;
         this.cameraFacingMode = 'user'; // 'user' (front) atau 'environment' (back)
+        this.isScreenSharing = false;
+        this.screenStream = null;
 
         // Tracking ICE Candidates yang sudah diproses agar tidak double
         this.processedCandidates = new Set();
@@ -523,6 +525,12 @@ class RelationshipCall {
         const btnExpandCamera = document.getElementById('btn-call-expand-camera');
         if (btnExpandCamera) {
             btnExpandCamera.addEventListener('click', () => this.toggleCamera());
+        }
+
+        // ── Expand Modal: Bagi Layar ──
+        const btnScreenShare = document.getElementById('btn-call-screen-share');
+        if (btnScreenShare) {
+            btnScreenShare.addEventListener('click', () => this.toggleScreenShare());
         }
 
         // ── Expand Modal: Putar Kamera (Front/Back) ──
@@ -2307,6 +2315,12 @@ class RelationshipCall {
             this.localStream = null;
         }
 
+        if (this.screenStream) {
+            this.screenStream.getTracks().forEach(track => track.stop());
+            this.screenStream = null;
+        }
+        this.isScreenSharing = false;
+
         // Tutup RTCPeerConnection
         if (this.peerConnection) {
             this.peerConnection.close();
@@ -2548,6 +2562,7 @@ class RelationshipCall {
         const videoContainer = document.getElementById('call-video-container');
         const btnCamera = document.getElementById('btn-call-expand-camera');
         const btnFlipCamera = document.getElementById('btn-call-flip-camera');
+        const btnScreenShare = document.getElementById('btn-call-screen-share');
         const expandCard = document.getElementById('call-expand-card');
         const expandHeader = document.getElementById('call-expand-header');
         const expandControls = document.getElementById('call-expand-controls');
@@ -2557,6 +2572,7 @@ class RelationshipCall {
             if (videoContainer) videoContainer.classList.remove('hidden');
             if (btnCamera) btnCamera.classList.remove('hidden');
             if (btnFlipCamera) btnFlipCamera.classList.remove('hidden');
+            if (btnScreenShare) btnScreenShare.classList.remove('hidden');
 
             if (expandCard) {
                 expandCard.className = "relative w-full h-full md:max-w-4xl md:h-[85vh] md:rounded-3xl text-center shadow-2xl flex flex-col justify-between overflow-hidden border-0 md:border md:border-white/10 bg-black z-0";
@@ -2584,6 +2600,7 @@ class RelationshipCall {
             if (videoContainer) videoContainer.classList.add('hidden');
             if (btnCamera) btnCamera.classList.add('hidden');
             if (btnFlipCamera) btnFlipCamera.classList.add('hidden');
+            if (btnScreenShare) btnScreenShare.classList.add('hidden');
 
             if (expandCard) {
                 expandCard.className = "relative bg-gradient-to-b from-gray-900 to-gray-950 border border-white/10 rounded-3xl p-6 md:p-8 w-full max-w-sm text-center shadow-2xl flex flex-col justify-between overflow-hidden z-0";
@@ -2648,6 +2665,134 @@ class RelationshipCall {
                         btnCamera.title = "Matikan Kamera";
                     }
                 }
+            }
+        }
+    }
+
+    async toggleScreenShare() {
+        if (this.isScreenSharing) {
+            await this.stopScreenShare();
+        } else {
+            await this.startScreenShare();
+        }
+    }
+
+    async startScreenShare() {
+        // Deteksi jika berjalan di dalam APK Android
+        const isApk = window.Capacitor && window.Capacitor.platform === 'android';
+        if (isApk) {
+            if (window.showAlert) {
+                window.showAlert("Fitur Bagi Layar di HP Android membutuhkan izin sistem tingkat lanjut (Foreground Service & MediaProjection) dan saat ini sedang dalam tahap pengembangan native.", "Informasi Sistem", "warning");
+            } else {
+                alert("Fitur Bagi Layar di HP Android membutuhkan izin sistem tingkat lanjut dan saat ini sedang dalam tahap pengembangan native.");
+            }
+            return;
+        }
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+            const errorMsg = "Browser Anda tidak mendukung fitur berbagi layar atau koneksi tidak aman (HTTPS wajib aktif).";
+            if (window.showAlert) {
+                window.showAlert(errorMsg, "Bagi Layar Gagal", "error");
+            } else {
+                alert(errorMsg);
+            }
+            return;
+        }
+
+        try {
+            console.log('[WebRTC] Memulai berbagi layar...');
+            this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: {
+                    cursor: "always"
+                },
+                audio: false
+            });
+
+            const screenTrack = this.screenStream.getVideoTracks()[0];
+            
+            // Cari RTCRtpSender untuk track video
+            if (this.peerConnection) {
+                const senders = this.peerConnection.getSenders();
+                const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+                if (videoSender) {
+                    await videoSender.replaceTrack(screenTrack);
+                    console.log('[WebRTC] Kamera lokal digantikan oleh aliran layar.');
+                }
+            }
+
+            // Bind preview lokal ke local-video agar user tahu layarnya sedang dibagikan
+            const localVideo = document.getElementById('local-video');
+            if (localVideo) {
+                localVideo.srcObject = this.screenStream;
+            }
+
+            this.isScreenSharing = true;
+            this.updateScreenShareUI(true);
+
+            // Dengarkan jika user mematikan screen share lewat control bar bawaan OS/browser
+            screenTrack.onended = () => {
+                console.log('[WebRTC] Berbagi layar dihentikan oleh pengguna.');
+                this.stopScreenShare();
+            };
+
+        } catch (err) {
+            console.error('[WebRTC] Gagal memulai berbagi layar:', err);
+            // Jangan tampilkan alert jika user mencancel pemilihan layar
+            if (err.name !== 'NotAllowedError') {
+                if (window.showAlert) {
+                    window.showAlert("Gagal mengakses rekaman layar: " + err.message, "Bagi Layar Gagal", "error");
+                }
+            }
+        }
+    }
+
+    async stopScreenShare() {
+        if (!this.isScreenSharing) return;
+
+        console.log('[WebRTC] Menghentikan berbagi layar, mengembalikan kamera...');
+        
+        // Hentikan semua track di screen stream
+        if (this.screenStream) {
+            this.screenStream.getTracks().forEach(track => track.stop());
+            this.screenStream = null;
+        }
+
+        // Kembalikan video track kamera lokal ke peer connection
+        if (this.localStream && this.peerConnection) {
+            const cameraTrack = this.localStream.getVideoTracks()[0];
+            if (cameraTrack) {
+                const senders = this.peerConnection.getSenders();
+                const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+                if (videoSender) {
+                    await videoSender.replaceTrack(cameraTrack);
+                    console.log('[WebRTC] Kamera lokal berhasil dikembalikan ke panggilan.');
+                }
+            }
+        }
+
+        // Bind kembali preview kamera lokal ke local-video
+        const localVideo = document.getElementById('local-video');
+        if (localVideo && this.localStream) {
+            localVideo.srcObject = this.localStream;
+        }
+
+        this.isScreenSharing = false;
+        this.updateScreenShareUI(false);
+    }
+
+    updateScreenShareUI(active) {
+        const btnScreenShare = document.getElementById('btn-call-screen-share');
+        if (btnScreenShare) {
+            if (active) {
+                btnScreenShare.classList.remove('bg-black/40', 'border-white/10');
+                btnScreenShare.classList.add('bg-emerald-500/20', 'border-emerald-500/30');
+                btnScreenShare.querySelector('svg')?.classList.add('text-emerald-400');
+                btnScreenShare.title = "Hentikan Berbagi Layar";
+            } else {
+                btnScreenShare.classList.remove('bg-emerald-500/20', 'border-emerald-500/30');
+                btnScreenShare.classList.add('bg-black/40', 'border-white/10');
+                btnScreenShare.querySelector('svg')?.classList.remove('text-emerald-400');
+                btnScreenShare.title = "Bagi Layar";
             }
         }
     }
